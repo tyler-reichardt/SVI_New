@@ -1,0 +1,214 @@
+trigger:
+  batch: true
+  branches:
+    include:
+      - model-build
+
+  paths:
+    include: 
+      - functions/*
+      - notebooks/*
+
+pool:
+  name: ADP Self-Hosted
+  demands:
+   - agent.name -equals AZSVADOPDP01
+
+# ============================================================================ #
+#  PIPELINE VARIABLES
+# ============================================================================ #
+
+variables:
+  buildArtifactName: 'DA.DBW.DSP.SINGLEVEHICLEINCIDENT'
+  secretsFilter: 'tenant-id,client-id-dsp-appr-modelbuild,client-secret-dsp-appr-modelbuild,dbw-url-dsp-modelbuild'
+  major: 1
+  minor: $[counter(variables['major'], 1)]
+
+name: geo-indices-build-v$(major).$(minor)
+
+# ============================================================================ #
+#  RESOURCES
+# ============================================================================ #
+
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: GTS/DA.YAML.TEMPLATES
+      refs: ref/heads/main
+
+# ============================================================================ #
+#  STAGES
+# ============================================================================ #
+
+stages:
+
+# ============================================================================ #
+#  TEST
+# ============================================================================ #
+
+- stage: Test
+  displayName: Unit Tests
+  
+  jobs:
+
+  - job: RunPyTest
+    displayName: PyTest
+    pool:
+      vmImage: ubuntu-latest
+
+    steps:
+
+    - task: UsePythonVersion@0
+      displayName: 'Use Python 3.9'
+      inputs:
+        versionSpec: 3.9
+  
+    - script: | 
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+      displayName: 'Install Python dependencies'
+
+    - task: Bash@3
+      displayName: Install Test Dependencies
+      inputs:
+        targetType: inline
+        script: python -m pip install --upgrade pip && python -m pip install pytest pytest-azurepipelines pytest-cov pandas scikit-learn mlflow lightgbm imblearn seaborn
+
+    - task: Bash@3
+      displayName: Run Pytest
+      inputs:
+        targetType: inline
+        script: pytest tests/ --doctest-modules --junitxml=junit/test-results.xml --cov=. --cov-report=xml
+
+    - task: PublishTestResults@2
+      displayName: 'Publish Test Results'
+      inputs:
+        testResultsFiles: '**/test-*.xml'
+      condition: succeededOrFailed()
+
+    - task: PublishCodeCoverageResults@2
+      inputs:
+        codeCoverageTool: Cobertura
+        summaryFileLocation: '$(System.DefaultWorkingDirectory)/**/coverage.xml'
+
+
+# ============================================================================ #
+#  BUILD ARTIFACT
+# ============================================================================ #
+
+- stage: Build
+  displayName: Build
+  dependsOn: Test
+  condition: succeeded()
+
+  jobs:
+  
+    - job: BuildPublish
+
+      workspace:
+        clean: all
+
+      steps:
+
+      - checkout: templates
+      - checkout: self
+        clean: true
+        fetchDepth: 2
+
+      # publish the artifacts
+      - task: PublishBuildArtifacts@1
+        condition: succeeded()
+        displayName: Publish Artifacts
+        inputs:
+          PathtoPublish: '$(System.DefaultWorkingDirectory)/DA.DBW.DSP.SINGLEVEHICLEINCIDENT'
+          ArtifactName: '$(buildArtifactName)'
+          publishLocation: 'Container'
+
+
+# ============================================================================ #
+#  DEPLOY MODEL BUILD
+# ============================================================================ #
+
+- stage: DeployModelBuild
+  displayName: Deploy to ModelBuild
+  dependsOn: Build
+  condition: and(succeeded(), startsWith(variables['Build.SourceBranch'], 'refs/heads/model-build'))
+
+  jobs:          
+
+    - deployment: Deploy
+      environment: 'Databricks-DSP-Model-Deploy-Dev'
+
+      variables:
+        environment: 'prod'
+        keyVaultName: 'fcg-kv-dbwcicd-$(environment)-01'
+        target: 'dev'
+
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+
+            - checkout: templates
+              path: 's\DA.YAML.TEMPLATES'
+
+            - template: yaml/steps/artifacts/artifacts-download.yml@templates
+              parameters:
+                artifactName: '$(buildArtifactName)'
+
+            - template: yaml/steps/key-vault/kv-get-secrets-private-link.yml@templates
+              parameters:
+                serviceConnectionName: 'SP-FCG-DPService-Prod-MLOps'
+                keyVaultName: $(keyVaultName)
+                secretsFilter: $(secretsFilter)
+
+            - task: PowerShell@2
+              displayName: 'Deploy Bundle Script'
+              inputs:
+                targetType: 'inline'
+                script: |
+                  $env:BUNDLE_ROOT = '$(System.ArtifactsDirectory)/$(buildArtifactName)'
+                  Write-Host "##[debug]Deploying bundle..."
+                  databricks bundle deploy -t $(target)
+              env:
+                DATABRICKS_HOST: $(dbw-url-dsp-modelbuild)
+                ARM_TENANT_ID: $(tenant-id)
+                ARM_CLIENT_ID: $(client-id-dsp-appr-modelbuild)
+                ARM_CLIENT_SECRET: $(client-secret-dsp-appr-modelbuild)
+              retryCountOnTaskFailure: 0
+
+            # - task: PowerShell@2
+            #   displayName: Run DABs Workflow - Regex
+            #   inputs:
+            #     targetType: 'inline'
+            #     script: |
+            #       $jobNamePattern = "geo_indices"
+            #       $excludePattern = "new_pcd_scoring"
+
+            #       $jsonOutput = databricks jobs list --output json
+            #       $jobList = $jsonOutput | ConvertFrom-Json
+                  
+            #       $filteredJobs = $jobList | Where-Object { 
+            #         $_.settings.name -like "*$jobNamePattern*" -and $_.settings.name -notlike "*$excludePattern*" 
+            #       }
+
+            #       # Check if any jobs matched the pattern
+            #       if ($null -eq $filteredJobs -or $filteredJobs.Count -eq 0) {
+            #           Write-Host "No jobs found matching the pattern: $jobNamePattern excluding: $excludePattern"
+            #           exit 1
+            #       }
+
+            #       # Select the first matching job
+            #       $job_id = $filteredJobs[0].job_id
+
+            #       Write-Host "First matching Job ID: $job_id"
+
+            #       databricks jobs run-now $job_id --no-wait
+            #   env:
+            #     DATABRICKS_HOST: $(dbw-url-dsp-modelbuild)
+            #     ARM_TENANT_ID: $(tenant-id)
+            #     ARM_CLIENT_ID: $(client-id-dsp-appr-modelbuild)
+            #     ARM_CLIENT_SECRET: $(client-secret-dsp-appr-modelbuild)
+            #   retryCountOnTaskFailure: 0
+              

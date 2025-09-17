@@ -1,0 +1,9 @@
+pyspark==3.5.0
+NumPy==1.23.5
+Pandas==1.5.3
+Scikit-Learn==1.1.1
+sklearn_pandas==2.2.0
+pyrosm
+xgboost
+mlflow
+hyperopt

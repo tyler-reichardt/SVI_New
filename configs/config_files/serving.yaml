@@ -1,0 +1,5 @@
+catalog_prefix: mlstore
+schema: single_vehicle_incident_checks
+desk_check_model_name: svi_desk_check_lgbm
+interview_model_name: svi_interview_lgbm
+cpu_size: Small

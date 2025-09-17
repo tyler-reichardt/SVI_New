@@ -1,0 +1,68 @@
+# Multi-environment configuration for Databricks deployment
+# Each environment has its own catalogs for reading (auxiliarydata) and writing (mlstore)
+
+environments:
+  dsexp:
+    name: "Data Science Experimentation"
+    catalog_prefix: "prod_dsexp_"
+    mlstore_catalog: "prod_dsexp_mlstore"
+    auxiliary_catalog: "prod_dsexp_auxiliarydata"
+    adp_catalog: "prod_adp_certified"
+  modelbuild:
+    name: "Model Build (DEV)"
+    catalog_prefix: "prod_modelbuild_"
+    mlstore_catalog: "prod_modelbuild_mlstore"
+    auxiliary_catalog: "prod_modelbuild_auxiliarydata"
+    adp_catalog: "prod_adp_certified"
+  modelpromotion:
+    name: "Model Promotion (UAT)"
+    catalog_prefix: "prod_modelpromotion_"
+    mlstore_catalog: "prod_modelpromotion_mlstore"
+    auxiliary_catalog: "prod_modelpromotion_auxiliarydata"
+    adp_catalog: "prod_adp_certified"
+  modeldeployment:
+    name: "Model Deployment (PROD)"
+    catalog_prefix: "prod_modeldeployment_"
+    mlstore_catalog: "prod_modeldeployment_mlstore"
+    auxiliary_catalog: "prod_modeldeployment_auxiliarydata"
+    adp_catalog: "prod_adp_certified"
+
+# Workspace URL to environment mapping
+workspaces:
+  'adb-6646029803360125.5.azuredatabricks.net': 'dsexp'
+  'adb-7739692825668627.7.azuredatabricks.net': 'modelbuild'
+  'adb-46486507102030.10.azuredatabricks.net': 'modelpromotion'
+  'adb-1657058261328338.18.azuredatabricks.net': 'modeldeployment'
+
+# Schema definitions for the project
+schemas:
+  svi_checks: "single_vehicle_incident_checks"
+  claim: "claim"
+  quote_motor: "quote_motor"
+  third_party_capture: "third_party_capture"
+
+# Table name configurations (without catalog prefix)
+tables:
+  # Auxiliary data tables (read-only)
+  claim_referral_log: "claim_referral_log"
+  svi_performance: "svi_performance"
+  policy_svi: "policy_svi"
+  
+  # MLStore tables (write)
+  claims_pol_svi: "claims_pol_svi"
+  svi_raw_data: "svi_raw_data_table"
+  svi_features: "svi_features_table"
+  
+  # ADP tables (read-only)
+  claim_version: "claim_version"
+  claim_version_item: "claim_version_item"
+  incident: "incident"
+  vehicle: "vehicle"
+  driver: "driver"
+  emergency_services: "emergency_services"
+  damage_details: "damage_details"
+  quote_iteration: "quote_iteration"
+  quote_vehicle: "vehicle"
+
+# Legacy configuration for backward compatibility
+catalog_prefix: mlstore

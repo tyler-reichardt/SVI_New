@@ -1,0 +1,69 @@
+# Scoring Configuration for SVI Fraud Detection
+# Configuration for batch scoring of Single Vehicle Incident claims
+
+workspaces:
+  'adb-6646029803360125.5.azuredatabricks.net': prod_dsexp_
+  'adb-7739692825668627.7.azuredatabricks.net': prod_modelbuild_
+  'adb-46486507102030.10.azuredatabricks.net': prod_modelpromotion_
+  'adb-1657058261328338.18.azuredatabricks.net': prod_modeldeployment_
+
+# Input data configuration
+input_data:
+  catalog_suffix: mlstore
+  schema: single_vehicle_incident_checks
+  name: svi_features_table
+
+# Scored data output
+scored_data:
+  catalog_suffix: mlscoring
+  schema: single_vehicle_incident_checks
+  predictions: svi_fraud_predictions
+  monitoring: svi_prediction_monitoring
+
+# Model configuration
+models:
+  desk_check:
+    catalog_suffix: mlstore
+    schema: single_vehicle_incident_checks
+    name: svi_desk_check_lgbm
+    alias: champion
+    threshold: 0.5
+  
+  interview:
+    catalog_suffix: mlstore
+    schema: single_vehicle_incident_checks
+    name: svi_interview_lgbm
+    alias: champion
+    threshold: 0.5
+
+# Business rules
+business_rules:
+  min_checks_failed: 1
+  late_night_no_commute_override: true
+  unconscious_keywords_override: true
+
+# Scoring parameters
+scoring_params:
+  batch_size: 10000
+  parallel_jobs: 4
+  include_shap_values: false
+  
+# Output columns to include
+output_columns:
+  - claim_number
+  - policy_number
+  - desk_check_score
+  - desk_check_decision
+  - interview_score
+  - interview_decision
+  - final_decision
+  - total_checks_failed
+  - business_rule_override
+  - risk_category
+  - recommended_action
+  
+# Monitoring thresholds
+monitoring:
+  volume_change_threshold: 0.3
+  score_drift_threshold: 0.2
+  referral_rate_threshold: 0.1

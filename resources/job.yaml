@@ -1,0 +1,110 @@
+resources:
+  jobs:
+    daily_pipeline_single_vehicle_indicent_job:
+      name: "Daily SVI Scoring Workflow"
+
+      schedule:
+        quartz_cron_expression: 0 0 6 ? * MON-FRI
+        timezone_id: UTC 
+
+      email_notifications:
+        on_failure:
+          - lewis.wong@first-central.com
+          - adeoluwa.adelugba@first-central.com
+          - tyler.reichardt@first-central.com
+        on_success:
+          - lewis.wong@first-central.com
+          - adeoluwa.adelugba@first-central.com
+          - tyler.reichardt@first-central.com
+
+      tasks:
+        - task_key: daily_data_preprocessing
+          job_cluster_key: svi_cluster
+          notebook_task:
+            notebook_path: ../notebooks/daily_pipeline/Daily_DataPreprocessing.py
+          max_retries: 0
+
+        - task_key: daily_feature_engineering
+          job_cluster_key: svi_cluster
+          depends_on:
+            - task_key: daily_data_preprocessing
+          notebook_task:
+            notebook_path: ../notebooks/daily_pipeline/Daily_FeatureEngineering.py
+          max_retries: 0
+    
+        - task_key: daily_model_scoring
+          job_cluster_key: svi_cluster
+          depends_on:
+            - task_key: daily_feature_engineering
+          notebook_task:
+            notebook_path: ../notebooks/daily_pipeline/Daily_Scoring.py
+          max_retries: 0
+      
+      job_clusters:
+        - job_cluster_key: svi_cluster
+          new_cluster:
+            num_workers: 1
+            spark_version: 14.3.x-cpu-ml-scala2.12
+            node_type_id: Standard_D16s_v3
+            driver_node_type_id: Standard_D32s_v3
+
+
+    training_single_vehicle_indicent_job:
+      name: "SVI Model Training Workflow"
+
+
+      email_notifications:
+        on_failure:
+          - lewis.wong@first-central.com
+          - adeoluwa.adelugba@first-central.com
+          - tyler.reichardt@first-central.com
+
+      tasks:
+        - task_key: training_data_preprocessing
+          job_cluster_key: svi_cluster
+          libraries: 
+            - whl: /Volumes/prod_shared/libraries/lib/pyyaml/6_0_1/PyYAML-6.0.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl
+          notebook_task:
+            notebook_path: ../notebooks/DataPreprocessing.py
+          max_retries: 0
+
+        - task_key: training_feature_engineering
+          job_cluster_key: svi_cluster
+          depends_on:
+            - task_key: training_data_preprocessing
+          notebook_task:
+            notebook_path: ../notebooks/FeatureEngineering.py
+          max_retries: 0
+    
+        - task_key: model_training
+          job_cluster_key: svi_cluster
+          depends_on:
+            - task_key: training_feature_engineering
+          notebook_task:
+            notebook_path: ../notebooks/ModelTraining.py
+          max_retries: 0
+
+      job_clusters:
+
+        - job_cluster_key: svi_cluster
+          new_cluster:
+            num_workers: 1
+            spark_version: 14.3.x-cpu-ml-scala2.12
+            spark_conf: {
+              "spark.databricks.acl.sqlOnly": true
+            }
+            node_type_id: Standard_D16s_v3
+            driver_node_type_id: Standard_D32s_v3
+            enable_elastic_disk: true
+            custom_tags: {
+                "ProjectName": "ThirdPartyCapture",
+                "EnvironmentName": "Production",
+                "BusinessUnit": "FCIM",
+                "CreatedBy": "Data Services",
+                "BussinessOwner": "Alana Robertson",
+                "DBWCDeployment": "Databricks Asset Bundle",
+                "DBWCProduct": "DSP",
+                "DBWCProjectCode": "DA0300",
+                "DBWCCostcenter": "0117",
+                "DBWCBillingContact": "alana.robertson@first-central.com"
+            }

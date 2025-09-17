@@ -1,0 +1,71 @@
+bundle:
+  name: single_vehicle_indicent_dabs
+
+include:
+  - resources/*.yaml
+
+variables:
+  build_branch:
+    default: 'model-build'
+
+targets:
+  dev:
+    presets:
+      name_prefix: 'single_vehicle_indicent-${var.build_branch}-${workspace.current_user.short_name}-'
+      tags:
+        ProjectName: 'ThirdPartyCapture'
+        EnvironmentName: 'Production'
+        BusinessUnit: 'FCIM'
+        CreatedBy: 'Data Services'
+        BussinessOwner: 'Alana Robertson'
+        DBWCDeployment: 'Databricks Asset Bundle'
+        DBWCProduct: 'DSP'
+        DBWCProjectCode: 'DA0300'
+        DBWCCostcenter: '117'
+        DBWCBillingContact: 'alana.robertson@first-central.com'
+    mode: development
+    variables:
+      build_branch: 'model-build'
+    default: true
+    workspace:
+      host: https://adb-7739692825668627.7.azuredatabricks.net/
+
+  staging:
+    presets:
+      name_prefix: 'single_vehicle_indicent-${var.build_branch}-${workspace.current_user.short_name}-'
+      tags:
+        ProjectName: 'ThirdPartyCapture'
+        EnvironmentName: 'Production'
+        BusinessUnit: 'FCIM'
+        CreatedBy: 'Data Services'
+        BussinessOwner: 'Alana Robertson'
+        DBWCDeployment: 'Databricks Asset Bundle'
+        DBWCProduct: 'DSP'
+        DBWCProjectCode: 'DA0300'
+        DBWCCostcenter: '117'
+        DBWCBillingContact: 'alana.robertson@first-central.com'
+    mode: production
+    variables:
+      build_branch: 'model-promotion'
+    workspace:
+      host: https://adb-46486507102030.10.azuredatabricks.net/
+
+  prod:
+    presets:
+      name_prefix: 'single_vehicle_indicent-${var.build_branch}-${workspace.current_user.short_name}-'
+      tags:
+        ProjectName: 'ThirdPartyCapture'
+        EnvironmentName: 'Production'
+        BusinessUnit: 'FCIM'
+        CreatedBy: 'Data Services'
+        BussinessOwner: 'Alana Robertson'
+        DBWCDeployment: 'Databricks Asset Bundle'
+        DBWCProduct: 'DSP'
+        DBWCProjectCode: 'DA0300'
+        DBWCCostcenter: '117'
+        DBWCBillingContact: 'alana.robertson@first-central.com'
+    mode: production
+    variables:
+      build_branch: 'model-deployment'
+    workspace:
+      host: https://adb-1657058261328338.18.azuredatabricks.net/

@@ -1,0 +1,265 @@
+# Feature Engineering Configuration
+# Uses dynamic table references that are resolved at runtime based on environment
+
+# Table references - catalog will be dynamically prepended based on environment
+raw_table_name: "single_vehicle_incident_checks.svi_raw_data_table"
+feature_table_name: "single_vehicle_incident_checks.svi_feature_table"
+
+# Check variables configuration (C1-C14 fraud risk indicators)
+check_variables:
+  C1:
+    name: "Friday/Saturday night incident"
+    description: "Incident occurred Friday/Saturday night (8pm-4am)"
+    column: "C1_fri_sat_night"
+  C2:
+    name: "Reporting delay check"
+    description: "Reported 3+ days after incident"
+    column: "C2_reporting_delay"
+    threshold_days: 3
+  C3:
+    name: "Weekend incident reported Monday"
+    description: "Weekend incident reported on Monday"
+    column: "C3_weekend_incident_reported_monday"
+  C4:
+    name: "Total loss check"
+    description: "Vehicle declared total loss"
+    column: "C4_total_loss"
+  C5:
+    name: "Night incident check"
+    description: "Incident occurred between 11pm-5am"
+    column: "C5_is_night_incident"
+  C6:
+    name: "No commute but rush hour"
+    description: "No commuting policy but incident during rush hour"
+    column: "C6_no_commuting_but_rush_hour"
+  C7:
+    name: "Police attendance/crime reference"
+    description: "Police attended or crime reference provided"
+    column: "C7_police_attended_or_crime_reference"
+  C8:
+    name: "Vehicle unattended check"
+    description: "Vehicle was unattended at time of incident"
+    column: "C8_vehicle_unattended"
+  C9:
+    name: "New policy check"
+    description: "Claim within 30 days of policy start"
+    column: "C9_policy_within_30_days"
+    threshold_days: 30
+  C10:
+    name: "Near policy end check"
+    description: "Claim within 60 days of policy end"
+    column: "C10_claim_to_policy_end"
+    threshold_days: 60
+  C11:
+    name: "Young/inexperienced driver"
+    description: "Driver <25 years old or <3 years licensed"
+    column: "C11_young_or_inexperienced"
+  C12:
+    name: "Expensive vehicle for age"
+    description: "Vehicle value high for driver age"
+    column: "C12_expensive_for_driver_age"
+  C13:
+    name: "High damage count check"
+    description: "5 or more areas damaged"
+    column: "C13_high_damage_count"
+    threshold: 5
+  C14:
+    name: "Watchwords check"
+    description: "Contains fraud-related keywords"
+    column: "C14_contains_watchwords"
+
+# Damage severity columns for aggregation
+severity_columns:
+  - boot_opens
+  - doors_open
+  - front_bonnet_severity
+  - front_left_severity
+  - front_right_severity
+  - front_severity
+  - left_back_seat_severity
+  - left_front_wheel_severity
+  - left_mirror_severity
+  - left_rear_wheel_severity
+  - left_roof_severity
+  - left_severity
+  - left_underside_severity
+  - lights_damaged
+  - load_area_severity
+  - panel_gaps
+  - radiator_damaged
+  - rear_left_severity
+  - rear_right_severity
+  - rear_severity
+  - rear_window_damage_severity
+  - right_back_seat_severity
+  - right_front_wheel_severity
+  - right_mirror_severity
+  - right_rear_wheel_severity
+  - right_roof_severity
+  - right_severity
+  - right_underside_severity
+  - roof_damage_severity
+  - sharp_edges
+  - underbody_damage_severity
+  - wheels_damaged
+  - windscreen_damage_severity
+
+# Single vehicle incident feature columns
+svi_feature_columns:
+  # Damage features
+  - damage_score
+  - areas_damaged
+  - damage_sev_max
+  - areasDamagedMinimal
+  - areasDamagedMedium
+  - areasDamagedHeavy
+  - areasDamagedSevere
+  - areasDamagedTotal
+  - areasDamagedRelative
+  
+  # Vehicle features
+  - vehicle_age
+  - vehicle_value
+  - manufacture_yr_claim
+  - engine_damage
+  - deployed_airbags
+  - total_loss_flag
+  - assessment_category
+  
+  # Driver features
+  - min_claim_driver_age
+  - age_at_policy_start_date_1
+  - licence_length_years_1
+  - max_years_resident_in_uk
+  - min_years_resident_in_uk
+  
+  # Policy features
+  - policyholder_ncd_years
+  - voluntary_amount
+  - annual_mileage
+  - ncd_protected_flag
+  
+  # Time-based features
+  - reporting_delay_days
+  - inception_to_claim_days
+  - claim_to_policy_end_days
+  - incident_hour
+  - incident_day_of_week
+  
+  # All check variables
+  - C1_fri_sat_night
+  - C2_reporting_delay
+  - C3_weekend_incident_reported_monday
+  - C5_is_night_incident
+  - C6_no_commuting_but_rush_hour
+  - C7_police_attended_or_crime_reference
+  - C9_policy_within_30_days
+  - C10_claim_to_policy_end
+  - C11_young_or_inexperienced
+  - C12_expensive_for_driver_age
+  - C14_contains_watchwords
+  - checks_max
+  - total_checks_failed
+  - num_failed_checks
+
+# Columns to keep constant (no transformation)
+constant_cols:
+  - bonnet_submerged
+  - engine_running_in_water
+  - water_ingress_within_engine
+  - side_panel_damage
+  - structural_damage
+  - is_high_value_vehicle
+  - theft_damage
+  - event_identity
+  - claim_id
+  - vehicle_registration
+  - market_value
+  - registration_number
+  - policy_reference
+  - vehicle_reg
+  - abi_model_code
+  - quote_iteration_id
+  - gross_amount 
+  - event_identity 
+  - policy_number 
+  - incident_type 
+  - insurance_id
+
+# Feature engineering parameters
+engineering_params:
+  # Damage score calculations
+  damage_score:
+    aggregations: ["sum", "mean", "max", "count"]
+    null_value: 0
+  
+  # Time-based features
+  time_features:
+    extract_day_of_week: true
+    extract_month: true
+    extract_year: true
+    calculate_delays: true
+  
+  # Categorical encoding
+  categorical_encoding:
+    method: "one_hot"
+    handle_unknown: "ignore"
+    max_categories: 50
+  
+  # Numeric scaling
+  numeric_scaling:
+    method: "standard"
+    with_mean: true
+    with_std: true
+
+# Feature selection
+feature_selection:
+  # Remove high cardinality features
+  max_cardinality: 100
+  
+  # Remove low variance features
+  min_variance: 0.01
+  
+  # Columns to always exclude
+  exclude_patterns:
+    - ".*_id$"
+    - ".*_timestamp$"
+    - ".*_date$"
+    - "^etl_.*"
+    - "^audit_.*"
+
+# Output column ordering
+ordered_columns:
+  - claim_number
+  - vehicle_unattended
+  - not_on_mid
+  - damage_sev_total
+  - damage_sev_count
+  - damage_sev_mean
+  - damage_sev_max
+  - C1_check
+  - C2_check
+  - C3_check
+  - C4_check
+  - C5_check
+  - C6_check
+  - C7_check
+  - C8_check
+  - C9_check
+  - C10_check
+  - C11_check
+  - C12_check
+  - C13_check
+  - C14_check
+  - total_checks_failed
+  - vehicle_age
+  - driver_age
+  - time_to_notify
+  - policy_age_at_incident
+  - mileage
+  - vehicle_value
+  - incident_cause_description
+  - weather_conditions
+  - driveable_damage_assessment
+  - CaptureSuccess_AdrienneVersion
+  - inc_tot_tppd

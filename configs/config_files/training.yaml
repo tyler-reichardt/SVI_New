@@ -1,0 +1,152 @@
+# Model Training Configuration
+# Configuration for two-stage SVI fraud detection model training
+
+# Model configurations
+models:
+  desk_check:
+    name: "svi_desk_check_model"
+    description: "Stage 1 - Predicts referral to TBG"
+    target: "tbg_risk"
+    experiment_name: "SVI_Desk_Check_Model"
+    
+  interview:
+    name: "svi_interview_model"
+    description: "Stage 2 - Predicts final SVI risk"
+    target: "svi_risk"
+    experiment_name: "SVI_Interview_Model"
+
+# Table references - catalog will be dynamically prepended based on environment
+training_data:
+  schema: "single_vehicle_incident_checks"
+  table: "svi_features"
+
+model_registry:
+  schema: "models"
+  
+# Hyperparameter search spaces
+hyperparameters:
+  desk_check:
+    param_grid:
+      classifier__n_estimators: [10, 20, 30, 50]
+      classifier__max_depth: [3, 4, 5, 6]
+      classifier__learning_rate: [0.1]
+      classifier__num_leaves: [5, 10, 15, 31]
+      classifier__min_child_weight: [0.1, 0.5]
+    
+    fixed_params:
+      scale_pos_weight: 12
+      random_state: 42
+      verbose: -1
+    
+    cv_params:
+      n_splits: 3
+      scoring: "recall"
+      
+  interview:
+    param_grid:
+      classifier__n_estimators: [10, 20, 30, 50]
+      classifier__max_depth: [3, 4, 5]
+      classifier__learning_rate: [0.1]
+      classifier__num_leaves: [5, 10, 15, 31, 61]
+      classifier__min_child_weight: [0.1, 0.5]
+    
+    fixed_params:
+      scale_pos_weight: 1
+      random_state: 42
+      verbose: -1
+    
+    cv_params:
+      n_splits: 5
+      scoring: "f1"
+    
+    use_undersampling: true
+    undersampler_random_state: 12
+
+# Feature configurations
+features:
+  # Check variables (C1-C14)
+  check_features:
+    - C1_fri_sat_night
+    - C2_reporting_delay
+    - C3_weekend_monday_report
+    - C4_total_loss
+    - C5_night_incident
+    - C6_no_commute_rush_hour
+    - C7_police_crime_ref
+    - C8_vehicle_unattended
+    - C9_new_policy
+    - C10_near_policy_end
+    - C11_young_inexperienced
+    - C12_expensive_for_age
+    - C13_high_damage_count
+    - C14_watchwords
+  
+  # Numeric features for desk check
+  desk_check_numeric:
+    - damage_score
+    - areas_damaged
+    - damage_sev_max
+    - vehicle_age
+    - min_claim_driver_age
+    - vehicle_value
+    - reporting_delay_days
+    - inception_to_claim_days
+    - claim_to_policy_end_days
+    - voluntary_amount
+    - policyholder_ncd_years
+    - annual_mileage
+    - total_checks_failed
+  
+  # Categorical features
+  categorical_features:
+    - incident_cause_group
+    - policy_type
+    - sales_channel
+    - incident_day_of_week
+    - incident_hour
+  
+  # Flag features
+  flag_features:
+    - high_vehicle_age
+    - young_driver
+    - incident_weekend
+    - night_incident
+    - ncd_protected_flag
+    - is_driveable
+  
+  # Interview model specific features (refined set)
+  interview_key_features:
+    - voluntary_amount
+    - policyholder_ncd_years
+    - areas_damaged
+    - damage_score
+    - vehicle_age
+    - vehicle_value
+    - annual_mileage
+    - min_claim_driver_age
+    - reporting_delay_days
+    - inception_to_claim_days
+
+# Preprocessing parameters
+preprocessing:
+  numeric_impute_strategy: "mean"
+  categorical_impute_strategy: "constant"
+  categorical_impute_value: "missing"
+  
+# Training parameters
+training_params:
+  test_size: 0.3
+  random_state: 42
+  n_jobs: -1
+  
+# Model evaluation thresholds
+evaluation:
+  desk_check_threshold: 0.5
+  interview_threshold: 0.5
+  minimum_checks_required: 1
+  
+# Endpoint configuration (for model serving)
+endpoint:
+  recreate_endpoint: true
+  remove_champion_alias: false
+  remove_challenger_alias: false

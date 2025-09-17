@@ -1,0 +1,85 @@
+# Data Preprocessing Configuration
+# Uses dynamic table references that are resolved at runtime based on environment
+
+# Table references - catalog will be dynamically prepended based on environment
+raw_table_name: "single_vehicle_incident_checks.svi_raw_data_table"
+processed_table_name: "single_vehicle_incident_checks.claims_pol_svi"
+
+# Data source configurations
+data_sources:
+  # ADP certified data sources (read-only)
+  claim_data:
+    schema: "claim"
+    tables:
+      - "claim_version"
+      - "claim_version_item"
+      - "incident"
+      - "vehicle"
+      - "driver"
+      - "emergency_services"
+      - "damage_details"
+  
+  policy_data:
+    schema: "quote_motor"
+    tables:
+      - "quote_iteration"
+      - "vehicle"
+  
+  # Auxiliary data sources (read-only)
+  auxiliary_data:
+    schema: "single_vehicle_incident_checks"
+    tables:
+      - "claim_referral_log"
+      - "svi_performance"
+      - "policy_svi"
+
+# Processing parameters
+processing_params:
+  # Date filters
+  start_date: "2023-01-01"
+  
+  # Split configuration
+  train_test_split: 0.7
+  stratify_column: "svi_risk"
+  random_seed: 42
+  
+  # Data quality thresholds
+  min_records_required: 1000
+  max_missing_percentage: 0.3
+
+# Column configurations
+columns:
+  # Key identifiers
+  claim_id: "claim_id"
+  policy_id: "policy_id"
+  incident_id: "incident_id"
+  
+  # Target variable
+  target: "svi_risk"
+  
+  # Date columns for filtering
+  date_columns:
+    - "claim_intimation_date"
+    - "incident_date"
+    - "policy_inception_date"
+  
+  # Columns to exclude from processing
+  exclude_columns:
+    - "created_timestamp"
+    - "updated_timestamp"
+    - "etl_batch_id"
+
+# Data quality checks
+quality_checks:
+  check_duplicates: true
+  check_missing_values: true
+  check_data_types: true
+  check_date_consistency: true
+
+# Output configurations
+output:
+  # Write to MLStore catalog
+  write_mode: "overwrite"
+  partition_by: ["claim_intimation_year", "claim_intimation_month"]
+  optimize_write: true
+  z_order_by: ["claim_id"]
