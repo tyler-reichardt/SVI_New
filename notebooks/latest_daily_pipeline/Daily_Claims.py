@@ -71,8 +71,6 @@ this_day = spark.table("global_temp.this_day").collect()[0][0]
 
 display(this_day)
 
-this_day = '1900-01-01'
-
 # COMMAND ----------
 
 spark.sql('USE CATALOG prod_adp_certified')
@@ -237,7 +235,7 @@ drop_cols = ['claim_id', 'claim_version_id', 'additional_vehicles_owned_2', 'add
 
 policy_svi = policy_svi.drop(*drop_cols)
 
-check_df = check_df.join(policy_svi_min_max, on="policy_number", how="left")
+check_df = check_df.join(policy_svi, on="policy_number", how="left")
 # filter for claims with only matched policies
 check_df = check_df.filter(col("policy_transaction_id").isNotNull()).dropDuplicates()
 
@@ -283,15 +281,6 @@ if preprocessed_df:
     
     # Calculate delays
     df = feature_engineer.calculate_delays(df)
-
-    # C2: Reporting delay (3+ days)
-    df = df.withColumn("delay_in_reporting", datediff(col("reported_date"), col("start_date")))
-    df = df.withColumn(
-        "C2_reporting_delay", 
-        when(col("delay_in_reporting") >= 3, 1)
-        .when(col("delay_in_reporting").isNull(), 1)
-        .otherwise(0)
-    )
     
     # Create check variables
     df = feature_engineer.create_check_variables(df)
@@ -306,56 +295,6 @@ if preprocessed_df:
     df = feature_engineer.handle_missing_values(df)
 
     print("\nFeature engineering pipeline completed successfully")
-
-# COMMAND ----------
-
-# Load the global temp view in the new notebook
-check_df_new = df
-
-# Load the original DataFrame from the global temp view (if needed, e.g., after restart)
-check_df_old = spark.table("global_temp.check_df_global")
-
-# COMMAND ----------
-
-from pyspark.sql.functions import expr, col
-
-# Initial DataFrame selection as provided
-common_cols = sorted(list(set(check_df_new.columns) & set(check_df_old.columns)))
-source_df = check_df_new.filter(col("claim_number") == "FC/901099994").select(*common_cols)
-
-# Dynamically construct the arguments for the stack expression.
-# This creates pairs of literal column names and their corresponding column values.
-# Backticks (`) are used to handle column names that may contain special characters.
-stack_args = ", ".join([f"'{c}', cast(`{c}` as string)" for c in source_df.columns])
-
-# Construct the full stack expression string.
-# The expression transforms the wide DataFrame into a long format with two new columns.
-stack_expr_str = f"stack({len(source_df.columns)}, {stack_args}) as (column_name, column_value)"
-
-# Apply the expression to the single-row DataFrame to unpivot it.
-unpivoted_df = source_df.select(expr(stack_expr_str))
-
-display(unpivoted_df)
-
-# COMMAND ----------
-
-# Initial DataFrame selection as provided
-common_cols = sorted(list(set(check_df_new.columns) & set(check_df_old.columns)))
-source_df = check_df_old.filter(col("claim_number") == "FC/901099994").select(*common_cols)
-
-# Dynamically construct the arguments for the stack expression.
-# This creates pairs of literal column names and their corresponding column values.
-# Backticks (`) are used to handle column names that may contain special characters.
-stack_args = ", ".join([f"'{c}', cast(`{c}` as string)" for c in source_df.columns])
-
-# Construct the full stack expression string.
-# The expression transforms the wide DataFrame into a long format with two new columns.
-stack_expr_str = f"stack({len(source_df.columns)}, {stack_args}) as (column_name, column_value)"
-
-# Apply the expression to the single-row DataFrame to unpivot it.
-unpivoted_df = source_df.select(expr(stack_expr_str))
-
-display(unpivoted_df)
 
 # COMMAND ----------
 
