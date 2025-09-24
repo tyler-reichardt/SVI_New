@@ -47,7 +47,8 @@ import warnings
 from scipy import stats
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
-    roc_auc_score, average_precision_score
+    roc_auc_score, average_precision_score, precision_recall_curve,
+    confusion_matrix, ConfusionMatrixDisplay, auc
 )
 warnings.filterwarnings('ignore')
 
@@ -344,6 +345,59 @@ class SVIModelMonitoring:
             alerts_df.write.mode("append").saveAsTable(self.alerts_table)
             
         return alerts
+    
+    def evaluate_thresholds(self, raw_df, fa_threshold, interview_threshold):
+        """
+        Evaluate different threshold combinations for model calibration.
+        From experiments/notebooks/05_Model_Evaluation.py
+        """
+        raw_df['y_pred'] = ((raw_df['fa_pred'] >= fa_threshold)).astype(int)
+        raw_df['y_pred2'] = ((raw_df['y_prob2'] >= interview_threshold)).astype(int)
+        
+        # Combined prediction
+        raw_df['y_cmb'] = ((raw_df['y_pred'] == 1) & (raw_df['y_pred2'] == 1) & 
+                          (raw_df['num_failed_checks'] >= 1)).astype(int)
+        
+        # Calculate confusion matrix
+        cm = confusion_matrix(raw_df['svi_risk'], raw_df['y_cmb'])
+        
+        # Calculate metrics
+        precision = precision_score(raw_df['svi_risk'], raw_df['y_cmb'])
+        recall = recall_score(raw_df['svi_risk'], raw_df['y_cmb'])
+        f1 = f1_score(raw_df['svi_risk'], raw_df['y_cmb'])
+        
+        metrics = {
+            'fa_threshold': fa_threshold,
+            'interview_threshold': interview_threshold,
+            'precision': precision,
+            'recall': recall,
+            'f1_score': f1,
+            'confusion_matrix': cm
+        }
+        
+        return metrics
+    
+    def calculate_gini_coefficient(self, y_true, y_pred):
+        """
+        Calculate Gini coefficient for model evaluation.
+        """
+        assert len(y_true) == len(y_pred)
+        
+        # Sort by predicted values
+        all_data = np.array(list(zip(y_pred, y_true)))
+        all_data = all_data[all_data[:, 0].argsort()]
+        
+        sorted_predicted = all_data[:, 0]
+        sorted_actual = all_data[:, 1]
+        
+        # Cumulative sum of actual values
+        cumulative_actual = np.cumsum(sorted_actual)
+        cumulative_actual_normalized = cumulative_actual / cumulative_actual[-1]
+        
+        # Gini formula
+        gini_score = 1 - 2 * np.sum(cumulative_actual_normalized) / len(y_true) + 1 / len(y_true)
+        
+        return gini_score
     
     def generate_monitoring_dashboard(self, days_back=30):
         """

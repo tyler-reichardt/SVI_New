@@ -1,0 +1,263 @@
+# Databricks notebook source
+# MAGIC %md
+# MAGIC ## SVI: Extract policy features for single-vehicle claims
+
+# COMMAND ----------
+
+# Import required libraries
+from pyspark.sql import functions as F
+from pyspark.sql import Window
+
+# COMMAND ----------
+
+# Get date parameter from widget
+this_day = dbutils.widgets.get("date_range")
+
+# Alternative for testing
+#this_day = '2025-07-01'
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Extract Policy Transaction Data
+
+# COMMAND ----------
+
+def get_latest_policy_transactions():
+    """Get the latest policy transaction for each policy"""
+    w = Window.partitionBy("policy_number").orderBy(F.col("transaction_policy_version").desc())
+    
+    policy_transaction = spark.sql("""
+    SELECT 
+        -- Columns from policy_transaction table
+        pt.policy_transaction_id,
+        pt.sales_channel, 
+        pt.transaction_policy_version,
+        pt.quote_session_id,
+        pt.policy_number
+    FROM prod_adp_certified.policy_motor.policy_transaction pt """
+    ).withColumn("rn", F.row_number().over(w))\
+    .filter(F.col("rn") == 1)\
+    .drop("rn", "transaction_policy_version")
+    
+    return policy_transaction
+
+policy_transaction = get_latest_policy_transactions()
+
+# COMMAND ----------
+
+def get_policy_data():
+    """Get core policy information"""
+    policy = spark.sql(""" 
+    SELECT
+        p.policy_number,
+        p.policy_start_date,
+        p.policy_renewal_date,
+        p.policy_type,
+        p.policyholder_ncd_years,
+        p.ncd_protected_flag,
+        p.policy_number 
+    FROM prod_adp_certified.policy_motor.policy p""")
+    
+    return policy
+
+policy = get_policy_data()
+
+# COMMAND ----------
+
+def get_vehicle_data():
+    """Get vehicle information with overnight location details"""
+    vehicle = spark.sql(""" 
+    SELECT 
+        v.policy_transaction_id,
+        v.vehicle_overnight_location_code as overnight_location_abi_code,
+        vo.vehicle_overnight_location_id, 
+        vo.vehicle_overnight_location_name, 
+        v.business_mileage, 
+        v.annual_mileage, 
+        v.year_of_manufacture, 
+        v.registration_date, 
+        v.car_group, 
+        v.vehicle_value, 
+        v.purchase_date 
+    FROM prod_adp_certified.policy_motor.vehicle v 
+    LEFT JOIN prod_adp_certified.reference_motor.vehicle_overnight_location vo 
+    ON v.vehicle_overnight_location_code = vo.vehicle_overnight_location_code""")
+    
+    return vehicle
+
+vehicle = get_vehicle_data()
+
+# COMMAND ----------
+
+def get_excess_data():
+    """Get excess information for policies"""
+    excess = spark.sql(""" 
+    SELECT 
+        policy_transaction_id,
+        voluntary_amount
+    FROM prod_adp_certified.policy_motor.excess 
+    WHERE excess_index = 0""")
+    
+    return excess
+
+excess = get_excess_data()
+
+# COMMAND ----------
+
+def get_driver_data():
+    """Get driver information and transform to wide format"""
+    driver = spark.sql(""" 
+    SELECT
+        pd.policy_transaction_id,
+        pd.date_of_birth,
+        pd.additional_vehicles_owned, 
+        pd.age_at_policy_start_date, 
+        pd.cars_in_household, 
+        pd.licence_length_years, 
+        pd.years_resident_in_uk,
+        do.occupation_code as employment_type_abi_code
+    FROM prod_adp_certified.policy_motor.driver pd
+    LEFT JOIN prod_adp_certified.policy_motor.driver_occupation do
+    ON pd.policy_transaction_id = do.policy_transaction_id
+    AND pd.driver_index = do.driver_index
+    WHERE do.occupation_index = 0
+    ORDER BY pd.policy_transaction_id, pd.driver_index"""
+    ).dropDuplicates()
+    
+    # Transform to wide format with numbered columns for each driver
+    driver_transformed = driver.groupBy("policy_transaction_id").agg(
+        F.collect_list("date_of_birth").alias("date_of_birth"),
+        F.collect_list("additional_vehicles_owned").alias("additional_vehicles_owned"),
+        F.collect_list("age_at_policy_start_date").alias("age_at_policy_start_date"),
+        F.collect_list("cars_in_household").alias("cars_in_household"),
+        F.collect_list("licence_length_years").alias("licence_length_years"),
+        F.collect_list("years_resident_in_uk").alias("years_resident_in_uk"),
+        F.collect_list("employment_type_abi_code").alias("employment_type_abi_code")
+    )
+    
+    # Get maximum number of drivers
+    max_list_size = driver_transformed.select(
+        *[F.size(F.col(col)).alias(col) for col in driver_transformed.columns if col != "policy_transaction_id"]
+    ).agg(F.max(F.greatest(*[F.col(col) for col in driver_transformed.columns if col != "policy_transaction_id"]))).collect()[0][0]
+    
+    # Dynamically explode each list into individual columns
+    columns_to_explode = [col for col in driver_transformed.columns if col != "policy_transaction_id"]
+    for col in columns_to_explode:
+        for i in range(max_list_size):
+            driver_transformed = driver_transformed.withColumn(
+                f"{col}_{i+1}",
+                F.col(col)[i]
+            )
+    
+    # Drop the original list columns
+    driver_transformed = driver_transformed.drop(*columns_to_explode)
+    
+    return driver_transformed
+
+driver_transformed = get_driver_data()
+
+# COMMAND ----------
+
+def get_svi_claims(this_day):
+    """Get single vehicle incident claims for the specified date"""
+    svi_claims = spark.sql("""
+        SELECT 
+            c.claim_id,
+            c.policy_number, 
+            i.reported_date
+        FROM prod_adp_certified.claim.claim_version cv
+        LEFT JOIN prod_adp_certified.claim.incident i
+        ON i.event_identity = cv.event_identity
+        LEFT JOIN prod_adp_certified.claim.claim c
+        ON cv.claim_id = c.claim_id
+        WHERE incident_cause IN (
+            'Animal', 
+            'Attempted To Avoid Collision', 
+            'Debris/Object', 
+            'Immobile Object', 
+            'Lost Control - No Third Party Involved'
+        )
+    """).filter(f"DATE(reported_date)='{this_day}'")
+    
+    return svi_claims
+
+svi_claims = get_svi_claims(this_day)
+
+# COMMAND ----------
+
+def get_latest_claim_versions():
+    """Get the latest claim version for each claim"""
+    latest_claims = spark.sql("""
+      SELECT 
+        max(claim_version_id) claim_version_id,
+        claim_id
+      FROM prod_adp_certified.claim.claim_version
+      GROUP BY claim_id
+    """)
+    
+    return latest_claims
+
+latest_claims = get_latest_claim_versions()
+
+# Join claims with latest versions
+svi_claims = svi_claims.join(latest_claims, ["claim_id"], "left")
+
+print(f"Processing {svi_claims.count()} claims for {this_day}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Join All Data Sources
+
+# COMMAND ----------
+
+# Combine all policy-related data
+policy_svi = (
+    svi_claims
+    .join(policy, ['policy_number'], "left")
+    .join(policy_transaction, ['policy_number'], "left")
+    .join(vehicle, ['policy_transaction_id'], "left")
+    .join(excess, ['policy_transaction_id'], "left")
+    .join(driver_transformed, ['policy_transaction_id'], "left")
+    .drop_duplicates()
+).withColumn("postcode", F.lit(None))  # ignore postcodes for privacy
+
+# Display sample
+print(f"Final dataset shape: {policy_svi.count()} rows, {len(policy_svi.columns)} columns")
+print(f"Columns: {policy_svi.columns}")
+
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Save Results
+
+# COMMAND ----------
+
+# Write to table
+policy_svi.write \
+    .mode("overwrite") \
+    .format("delta") \
+    .option("mergeSchema", "true") \
+    .saveAsTable("prod_dsexp_auxiliarydata.single_vehicle_incident_checks.daily_policy_svi")
+
+print(f"Successfully saved {policy_svi.count()} policy records to daily_policy_svi table")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ### Data Quality Check
+
+# COMMAND ----------
+
+# Verify data was saved correctly
+saved_data = spark.table("prod_dsexp_auxiliarydata.single_vehicle_incident_checks.daily_policy_svi")
+print(f"Verified: {saved_data.count()} records saved to table")
+
+# Check for any null policy numbers
+null_policies = saved_data.filter(F.col("policy_number").isNull()).count()
+if null_policies > 0:
+    print(f"Warning: {null_policies} records with null policy numbers")
+else:
+    print("All records have valid policy numbers")

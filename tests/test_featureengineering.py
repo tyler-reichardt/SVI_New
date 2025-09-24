@@ -15,6 +15,7 @@ import sys
 sys.path.append('..')
 
 from functions.feature_engineering import *
+from pyspark.sql.functions import hour, dayofweek, month, datediff, year, greatest, least
 
 @pytest.fixture(scope="session")
 def spark_session():
@@ -48,6 +49,229 @@ def test_read_and_process_delta(spark_session):
         
         # Test selecting useful columns
         df_select = read_and_process_delta(spark_session, "fake_path", useful_columns=["id"])
+
+
+# Tests for standalone feature engineering functions
+
+def test_apply_damage_score_calculation(spark_session):
+    """Test the apply_damage_score_calculation function"""
+    # Create test data
+    test_data = [
+        ("claim1", 2, 1, 1, 1),  # 2 minimal, 1 medium, 1 severe, 1 heavy
+        ("claim2", 1, 0, 2, 0),  # 1 minimal, 0 medium, 2 severe, 0 heavy
+    ]
+    columns = ["claim_number", "areasDamagedMinimal", "areasDamagedMedium", 
+               "areasDamagedSevere", "areasDamagedHeavy"]
+    df = spark_session.createDataFrame(test_data, columns)
+    
+    # Add damage severity columns for damage_sev_max calculation
+    df = df.withColumn("front_severity", lit("Severe"))
+    df = df.withColumn("rear_severity", lit("Medium"))
+    
+    result = apply_damage_score_calculation(df)
+    result_dict = {r["claim_number"]: r for r in result.collect()}
+    
+    # Check areasDamagedRelative calculation
+    # claim1: 2*1 + 1*2 + 1*3 + 1*4 = 2 + 2 + 3 + 4 = 11
+    assert result_dict["claim1"]["areasDamagedRelative"] == 11
+    
+    # claim2: 1*1 + 0*2 + 2*3 + 0*4 = 1 + 0 + 6 + 0 = 7
+    assert result_dict["claim2"]["areasDamagedRelative"] == 7
+    
+    # Check damage_sev_max (should be 4 for Severe)
+    assert result_dict["claim1"]["damage_sev_max"] == 4
+
+
+def test_create_time_based_features(spark_session):
+    """Test the create_time_based_features function"""
+    # Create test data
+    test_data = [
+        ("claim1", datetime(2024, 1, 5, 22, 0, 0), date(2024, 1, 8)),  # Friday night, Monday report
+        ("claim2", datetime(2024, 1, 7, 14, 0, 0), date(2024, 1, 7)),  # Sunday afternoon, Sunday report
+    ]
+    columns = ["claim_number", "start_date", "reported_date"]
+    df = spark_session.createDataFrame(test_data, columns)
+    
+    result = create_time_based_features(df)
+    result_dict = {r["claim_number"]: r for r in result.collect()}
+    
+    # Check day of week features
+    assert "incident_day_of_week" in result.columns
+    assert "reported_day_of_week" in result.columns
+    
+    # Check weekend flags
+    assert result_dict["claim2"]["incident_weekend"] == 1  # Sunday is weekend
+    assert result_dict["claim2"]["is_incident_weekend"] == 1
+    
+    # Check Monday reporting
+    assert result_dict["claim1"]["reported_monday"] == 1
+    assert result_dict["claim1"]["is_reported_monday"] == 1
+    
+    # Check hour features
+    assert result_dict["claim1"]["incidentHourC"] == 22
+    assert result_dict["claim2"]["incidentHourC"] == 14
+    
+    # Check night incident
+    assert result_dict["claim1"]["night_incident"] == 0  # 22:00 is not night (23-5)
+    
+
+def test_calculate_delays(spark_session):
+    """Test the calculate_delays function"""
+    # Create test data
+    test_data = [
+        ("claim1", date(2024, 1, 10), date(2024, 1, 8), date(2023, 12, 1), date(2024, 12, 31), 2020),
+        ("claim2", date(2024, 6, 15), date(2024, 6, 20), date(2024, 1, 1), date(2024, 12, 31), 2015),
+    ]
+    columns = ["claim_number", "start_date", "reported_date", "policy_start_date", 
+               "policy_renewal_date", "vehicle_year"]
+    df = spark_session.createDataFrame(test_data, columns)
+    
+    result = calculate_delays(df)
+    result_dict = {r["claim_number"]: r for r in result.collect()}
+    
+    # Check inception to claim delay
+    # claim1: 2024-01-10 - 2023-12-01 = 40 days
+    assert result_dict["claim1"]["inception_to_claim"] == 40
+    assert result_dict["claim1"]["inception_to_claim_days"] == 40
+    
+    # Check claim to policy end
+    # claim1: 2024-12-31 - 2024-01-10 = 356 days
+    assert result_dict["claim1"]["claim_to_policy_end"] == 356
+    
+    # Check delay in reporting
+    # claim2: 2024-06-20 - 2024-06-15 = 5 days
+    assert result_dict["claim2"]["delay_in_reporting"] == 5
+    
+    # Check vehicle age
+    # claim1: 2024 - 2020 = 4 years
+    assert result_dict["claim1"]["veh_age"] == 4
+    assert result_dict["claim1"]["manufacture_yr_claim"] == 2020
+    assert result_dict["claim1"]["veh_age_more_than_10"] == 0
+    
+    # claim2: 2024 - 2015 = 9 years
+    assert result_dict["claim2"]["veh_age"] == 9
+    assert result_dict["claim2"]["veh_age_more_than_10"] == 0
+
+
+def test_create_driver_features(spark_session):
+    """Test the create_driver_features function"""
+    # Create test data
+    test_data = [
+        ("claim1", 23, 22, 2),  # Young driver
+        ("claim2", 45, 40, 20),  # Experienced driver
+    ]
+    columns = ["claim_number", "age_at_policy_start_date_1", "min_claim_driver_age", "licence_length_years_1"]
+    df = spark_session.createDataFrame(test_data, columns)
+    
+    result = create_driver_features(df)
+    result_dict = {r["claim_number"]: r for r in result.collect()}
+    
+    # Check driver age low flags
+    assert result_dict["claim1"]["driver_age_low_1"] == 1  # 23 < 25
+    assert result_dict["claim1"]["claim_driver_age_low"] == 1  # 22 < 25
+    assert result_dict["claim1"]["licence_low_1"] == 1  # 2 <= 3
+    
+    assert result_dict["claim2"]["driver_age_low_1"] == 0  # 45 >= 25
+    assert result_dict["claim2"]["claim_driver_age_low"] == 0  # 40 >= 25
+    assert result_dict["claim2"]["licence_low_1"] == 0  # 20 > 3
+
+
+def test_create_policy_features(spark_session):
+    """Test the create_policy_features function"""
+    # Create test data
+    test_data = [
+        ("claim1", "Social", "DriveableTotalLoss"),
+        ("claim2", "Commuting", "Driveable"),
+    ]
+    columns = ["claim_number", "vehicle_use", "assessment_category"]
+    df = spark_session.createDataFrame(test_data, columns)
+    
+    result = create_policy_features(df)
+    result_dict = {r["claim_number"]: r for r in result.collect()}
+    
+    # Check vehicle use quote
+    assert result_dict["claim1"]["vehicle_use_quote"] == 1  # Not commuting
+    assert result_dict["claim2"]["vehicle_use_quote"] == 0  # Commuting
+    
+    # Check total loss flags
+    assert result_dict["claim1"]["total_loss_flag"] == True
+    assert result_dict["claim1"]["total_loss_new"] == 1
+    
+    assert result_dict["claim2"]["total_loss_flag"] == False
+    assert result_dict["claim2"]["total_loss_new"] == 0
+
+
+def test_handle_missing_values_fe(spark_session):
+    """Test the handle_missing_values_fe function"""
+    # Create test data with missing values
+    test_data = [
+        ("claim1", 10.0, 1, 1),
+        ("claim2", None, None, None),
+    ]
+    columns = ["claim_number", "damage_score", "incident_weekend", "driver_age_low_1"]
+    df = spark_session.createDataFrame(test_data, columns)
+    
+    result = handle_missing_values_fe(df)
+    result_dict = {r["claim_number"]: r for r in result.collect()}
+    
+    # Check that missing values are filled
+    assert result_dict["claim2"]["damage_score"] == 0  # Numeric fill with 0
+    assert result_dict["claim2"]["incident_weekend"] == 0  # Boolean fill with 0
+    assert result_dict["claim2"]["driver_age_low_1"] == 0  # Boolean fill with 0
+    
+    # Check that existing values are preserved
+    assert result_dict["claim1"]["damage_score"] == 10.0
+    assert result_dict["claim1"]["incident_weekend"] == 1
+    assert result_dict["claim1"]["driver_age_low_1"] == 1
+
+
+def test_create_aggregated_features(spark_session):
+    """Test the create_aggregated_features function"""
+    # Create test data with multiple driver columns
+    test_data = [
+        ("claim1", 2, 30, 1, 10),
+        ("claim2", 0, 45, 2, 20),
+    ]
+    columns = ["claim_number", "additional_vehicles_owned_1", "age_at_policy_start_date_1",
+               "additional_vehicles_owned_2", "age_at_policy_start_date_2"]
+    df = spark_session.createDataFrame(test_data, columns)
+    
+    result = create_aggregated_features(df)
+    result_dict = {r["claim_number"]: r for r in result.collect()}
+    
+    # Check that max/min aggregations are created
+    assert result_dict["claim1"]["max_additional_vehicles_owned"] == 2  # max(2, 1) = 2
+    assert result_dict["claim1"]["min_additional_vehicles_owned"] == 1  # min(2, 1) = 1
+    
+    assert result_dict["claim1"]["max_age_at_policy_start_date"] == 30  # max(30, 10) = 30
+    assert result_dict["claim1"]["min_age_at_policy_start_date"] == 10  # min(30, 10) = 10
+
+
+def test_select_modeling_features(spark_session):
+    """Test the select_modeling_features function"""
+    # Create test data with various feature types
+    test_data = [
+        ("claim1", 1, 0, 10.0, "Driveable", 1, "High"),
+        ("claim2", 0, 1, 20.0, "TotalLoss", 0, "Low"),
+    ]
+    columns = ["claim_number", "svi_risk", "tbg_risk", "damage_score", 
+               "assessment_category", "C1_fri_sat_night", "vehicle_use_quote"]
+    df = spark_session.createDataFrame(test_data, columns)
+    
+    # Add dataset column for partitioning
+    df = df.withColumn("dataset", lit("train"))
+    
+    result = select_modeling_features(df)
+    
+    # Check that key columns are selected
+    assert "claim_number" in result.columns
+    assert "svi_risk" in result.columns
+    assert "damage_score" in result.columns
+    assert "assessment_category" in result.columns
+    assert "C1_fri_sat_night" in result.columns
+    
+    # Check that only existing columns are selected
+    assert result.count() == 2
         assert df_select.columns == ["id"]
         
         # Test skiprows

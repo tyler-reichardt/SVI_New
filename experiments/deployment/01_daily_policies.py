@@ -1,32 +1,36 @@
 # Databricks notebook source
-# MAGIC  %md
+# MAGIC %md
 # MAGIC ## SVI: Extract policy features for single-vehicle claims
 
 # COMMAND ----------
 
-from pyspark.sql import functions as F
-from pyspark.sql.functions import collect_list
+
 
 # COMMAND ----------
 
+from pyspark.sql import functions as F
+from pyspark.sql import Window
 
 
 # COMMAND ----------
 
 this_day = dbutils.widgets.get("date_range")
 
-#this_day = '2025-03-01'
+#this_day = '2025-07-01'
 
+w = Window.partitionBy("policy_number").orderBy(F.col("transaction_policy_version").desc())
 policy_transaction = spark.sql("""
 SELECT 
     -- Columns from policy_transaction table
     pt.policy_transaction_id,
     pt.sales_channel, 
+    pt.transaction_policy_version,
     pt.quote_session_id,
-    pt.customer_focus_id,
-    pt.customer_focus_version_id,
     pt.policy_number
-    FROM prod_adp_certified.policy_motor.policy_transaction pt """)
+    FROM prod_adp_certified.policy_motor.policy_transaction pt """
+).withColumn("rn", F.row_number().over(w))\
+.filter(F.col("rn") == 1)\
+.drop("rn", "transaction_policy_version")
 
 # COMMAND ----------
 
@@ -53,7 +57,6 @@ vehicle = spark.sql(""" SELECT
     v.registration_date, 
     v.car_group, 
     v.vehicle_value, 
-    v.vehicle_registration,
     v.purchase_date from prod_adp_certified.policy_motor.vehicle v LEFT JOIN prod_adp_certified.reference_motor.vehicle_overnight_location vo ON v.vehicle_overnight_location_code = vo.vehicle_overnight_location_code""")
 
 
@@ -68,8 +71,6 @@ excess = spark.sql(""" select
 
 driver = spark.sql(""" select
     pd.policy_transaction_id,
-    pd.first_name ,
-    pd.last_name, 
     pd.date_of_birth,
     --pd.driving_licence_number,
     pd.additional_vehicles_owned, 
@@ -77,25 +78,17 @@ driver = spark.sql(""" select
     pd.cars_in_household, 
     pd.licence_length_years, 
     pd.years_resident_in_uk,
-    do.occupation_code as employment_type_abi_code,
-    ms.marital_status_code,
-    ms.marital_status_name
+    do.occupation_code as employment_type_abi_code
     from prod_adp_certified.policy_motor.driver pd
     LEFT JOIN prod_adp_certified.policy_motor.driver_occupation do
     ON pd.policy_transaction_id = do.policy_transaction_id
     AND pd.driver_index = do.driver_index
-    LEFT JOIN prod_adp_certified.reference_motor.marital_status ms ON pd.marital_status_code = ms.marital_status_id 
-    WHERE do.occupation_index = 1
+    WHERE do.occupation_index = 0
     ORDER BY pd.policy_transaction_id,pd.driver_index"""
     ).dropDuplicates()
 
 driver_transformed = driver.groupBy("policy_transaction_id").agg(
-    F.collect_list("first_name").alias("first_name"),
-    F.collect_list("last_name").alias("last_name"),
     F.collect_list("date_of_birth").alias("date_of_birth"),
-    #F.collect_list("driving_licence_number").alias("driving_licence_number"),
-    F.collect_list("marital_status_code").alias("marital_status_code"),
-    F.collect_list("marital_status_name").alias("marital_status_name"),
     F.collect_list("additional_vehicles_owned").alias("additional_vehicles_owned"),
     F.collect_list("age_at_policy_start_date").alias("age_at_policy_start_date"),
     F.collect_list("cars_in_household").alias("cars_in_household"),
@@ -103,7 +96,6 @@ driver_transformed = driver.groupBy("policy_transaction_id").agg(
     F.collect_list("years_resident_in_uk").alias("years_resident_in_uk"),
     F.collect_list("employment_type_abi_code").alias("employment_type_abi_code")
 )
-
 
 max_list_size = driver_transformed.select(
     *[F.size(F.col(col)).alias(col) for col in driver_transformed.columns if col != "policy_transaction_id"]
@@ -119,30 +111,6 @@ for col in columns_to_explode:
         )
 # Drop the original list columns
 driver_transformed = driver_transformed.drop(*columns_to_explode)
-
-# Show the transformed DataFrame
-#driver_transformed.display()
-
-# COMMAND ----------
-
-'''
-customer = spark.sql(""" select c.customer_focus_id,c.customer_focus_version_id,c.home_email, 
-    ca.postcode from
-    prod_adp_certified.customer.customer c
-LEFT JOIN 
-    prod_adp_certified.customer.customer_address ca
-    ON c.customer_focus_id = ca.customer_focus_id
-    AND c.customer_focus_version_id = ca.customer_focus_version_id""")
-'''
-
-customer = spark.sql(""" select c.customer_focus_id,c.customer_focus_version_id,c.home_email, 
-    c.postcode from
-    prod_adp_certified.customer_360.single_customer_view c
-""")
-
-# COMMAND ----------
-
-policy_transaction.join(customer, (customer.customer_focus_id == policy_transaction.customer_focus_id) & (customer.customer_focus_version_id == policy_transaction.customer_focus_version_id), "left").createOrReplaceTempView("policy_transaction_customer")
 
 
 # COMMAND ----------
@@ -185,27 +153,14 @@ policy_svi = (
     .join(vehicle, ['policy_transaction_id'], "left")
     .join(excess, ['policy_transaction_id'], "left")
     .join(driver_transformed, ['policy_transaction_id'], "left")
-    .join(
-        customer,
-        ['customer_focus_id', 'customer_focus_version_id'],
-        "left"
-    )
-    .drop_duplicates()
-)
+   .drop_duplicates()
+).withColumn("postcode", F.lit(None)) #ignore postcodes
 
-#display(policy_svi.limit(10))
 
 
 # COMMAND ----------
 
-'''
-latest_event_enqueued = spark.sql("""
-    SELECT MAX(transaction_timestamp) AS latest_event_enqueued
-    FROM prod_adp_certified.policy_motor.policy_transaction
-""")
 
-display(latest_event_enqueued)
-'''
 
 # COMMAND ----------
 

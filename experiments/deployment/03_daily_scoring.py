@@ -47,8 +47,8 @@ import datetime
 
 MODEL_VERSION = 0.1 #change with model update
 
-this_day = '2025-03-01'
-#this_day = dbutils.widgets.get("date_range")
+#this_day = '2025-03-01'
+this_day = dbutils.widgets.get("date_range")
 
 numeric_features = ['policyholder_ncd_years', 'inception_to_claim', 'min_claim_driver_age', 'veh_age', 'business_mileage', 'annual_mileage', 'incidentHourC', 'additional_vehicles_owned_1', 'age_at_policy_start_date_1', 'cars_in_household_1', 'licence_length_years_1', 'years_resident_in_uk_1', 'max_additional_vehicles_owned', 'min_additional_vehicles_owned', 'max_age_at_policy_start_date', 'min_age_at_policy_start_date', 'max_cars_in_household', 'min_cars_in_household', 'max_licence_length_years', 'min_licence_length_years', 'max_years_resident_in_uk', 'min_years_resident_in_uk', 'impact_speed', 'voluntary_amount', 'vehicle_value', 'manufacture_yr_claim', 'outstanding_finance_amount', 'claim_to_policy_end', 'incidentDayOfWeekC', 'damageScore', 'areasDamagedMinimal', 'areasDamagedMedium', 'areasDamagedHeavy', 'areasDamagedSevere', 'areasDamagedTotal']
 
@@ -237,7 +237,6 @@ raw_df =  do_fills_pd(raw_df)
 
 raw_df['fa_pred'] = fa_pipeline.predict_proba(raw_df[numeric_features + categorical_features])[:,1].round(4)
 
-#raw_df['y_prob2'] = interview_pipeline.predict_proba(raw_df[num_interview + cat_interview + ['fa_pred']] )[:,1].round(4)
 raw_df['y_prob2'] = interview_pipeline.predict_proba(raw_df[num_interview + cat_interview ] )[:,1].round(4)
 
 
@@ -257,7 +256,9 @@ raw_df['flagged_by_model'] = np.where(raw_df['y_cmb']==1, 1, 0) #do this first a
 # override model predictions where desired
 
 # No commuting on policy and customer travelling between the hours of 12am and 4am
-late_night_no_commuting_condition = (raw_df['vehicle_use_quote'].astype('int')== 1) & (raw_df['incidentHourC'].between(1, 4))
+default_vehicle_use = 1 # fill value
+late_night_no_commuting_condition = (raw_df['vehicle_use_quote'].fillna(default_vehicle_use)\
+                                        .astype('int')== 1) & (raw_df['incidentHourC'].between(1, 4))
 raw_df['late_night_no_commuting'] = np.where(late_night_no_commuting_condition, 1, 0)
 raw_df['y_cmb'] = np.where(raw_df['late_night_no_commuting']==1, 1, raw_df['y_cmb'])
 
@@ -272,17 +273,11 @@ raw_df['y_cmb_label'] = np.where(raw_df['y_cmb']==0, 'Low', 'High')
 raw_df['y_rank_prob'] = np.sqrt(raw_df['fa_pred'].fillna(100) * raw_df['y_prob2'].fillna(100)).round(3)
 raw_df['model_version'] = MODEL_VERSION
 
-#vehicle_use_quote, 'incidentHourC', Circumstances, 'flagged_by_model', late_night_no_commuting'
-
 
 # COMMAND ----------
 
 # MAGIC %md
 # MAGIC ## Write table
-
-# COMMAND ----------
-
-display(raw_df_spark)
 
 # COMMAND ----------
 
@@ -298,10 +293,12 @@ raw_df_spark = raw_df_spark.withColumn(
 raw_df_spark = raw_df_spark.withColumn(
     "risk_reason",
     expr("filter(risk_reason, x -> x is not null)")
-)
+).withColumn("vehicle_use_quote", col("vehicle_use_quote").cast("double"))
+
+display(raw_df_spark.select('vehicle_use_quote').schema)
 
 raw_df_spark.write \
-    .mode("append") \
     .format("delta").option("mergeSchema", "true")\
+    .mode("append") \
     .saveAsTable("prod_dsexp_auxiliarydata.single_vehicle_incident_checks.daily_svi_predictions")
 

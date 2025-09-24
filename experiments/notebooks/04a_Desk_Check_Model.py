@@ -154,50 +154,6 @@ display(raw_df_pd)
 
 # COMMAND ----------
 
-filtered_pd_df = raw_df_pd[raw_df_pd.claim_number == "FC/901136611"][sorted(raw_df_pd.columns)]
-filtered_spark_df = spark.createDataFrame(filtered_pd_df)
-display(filtered_spark_df)
-
-# COMMAND ----------
-
-melted_df = (
-    filtered_spark_df
-    .selectExpr("stack({}, {}) as (column, value)".format(
-        len(filtered_spark_df.columns),
-        ", ".join([f"'{c}', CAST(`{c}` AS STRING)" for c in filtered_spark_df.columns])
-    ))
-)
-
-display(melted_df)
-
-# COMMAND ----------
-
-sorted_columns = sorted(raw_df_pd.columns)
-print(f"Number of columns: {len(sorted_columns)}")
-sorted_columns
-
-# COMMAND ----------
-
-#create train and test now 
-# Split the data into train, test, and validation sets 
-#train_df, test_df = train_test_split(raw_df_pd, test_size=0.2, random_state=42, stratify=raw_df_pd.svi_risk)
-
-train_df = raw_df_pd[raw_df_pd.dataset == 'train'].drop('dataset', axis=1)
-train_df['svi_risk'] = train_df['svi_risk'].replace(-1, 0)
-#train_non_tbg = train_df[train_df['svi_risk']==-1] #these were not specially investigated
-
-test_df = raw_df_pd[raw_df_pd.dataset == 'test'].drop('dataset', axis=1)
-test_df['svi_risk'] = test_df['svi_risk'].replace(-1, 0)
-
-spark_df = spark.createDataFrame(train_df)
-
-# COMMAND ----------
-
-print(f"Number of columns: {len(spark_df.columns)}")
-spark_df.columns
-
-# COMMAND ----------
-
 #create train and test now 
 # Split the data into train, test, and validation sets 
 #train_df, test_df = train_test_split(raw_df_pd, test_size=0.2, random_state=42, stratify=raw_df_pd.svi_risk)
@@ -400,7 +356,7 @@ with mlflow.start_run():
 # COMMAND ----------
 
 print(y_train.value_counts())
-#7653/736
+7653/736
 
 # COMMAND ----------
 

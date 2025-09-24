@@ -4,7 +4,7 @@
 # MAGIC
 # MAGIC - Data from 2023 onwards is used to match ADP/DSP data range
 # MAGIC - Not all policies are in policy.policy table (hence no start date etc for such policies)
-# MAGIC - First party field does not seem properly populated: so using claim_version_item_index=0 in addtion
+# MAGIC - First party field does not seem properly populated: so using claim_version_item_index=0 in addition
 # MAGIC #SVI Data Build & Quality Checks: Main Notebook
 # MAGIC
 # MAGIC This notebook is split into parts: 
@@ -82,12 +82,8 @@ clm_log_df =  spark.sql("""
 clm_log = get_referral_vertices(clm_log_df).filter(lower(col("id")).contains("fc/")).select("id", "fraud_risk")
 clm_log.createOrReplaceTempView("clm_log")
 
-display(clm_log)
+#display(clm_log)
 
-
-# COMMAND ----------
-
-clm_log.createOrReplaceGlobalTempView("global_temp_view")
 
 # COMMAND ----------
 
@@ -471,6 +467,10 @@ check_df = check_df.filter(col("policy_transaction_id").isNotNull()).dropDuplica
 
 # COMMAND ----------
 
+
+
+# COMMAND ----------
+
 # MAGIC %md
 # MAGIC ###5. Feature Engineering
 # MAGIC
@@ -536,7 +536,7 @@ check_df = check_df.withColumn(
 #C7	Notified of a incident/CRN from the PH relating to the police attending the scene? (low risk)
 check_df = check_df.withColumn(
     "C7_police_attended_or_crime_reference",
-    when((col("is_police_attendance") == 1) | (col("is_crime_reference_provided") == True), 1).otherwise(0)
+    when((col("is_police_attendance") == True) | (col("is_crime_reference_provided") == True), 1).otherwise(0)
 )
 
 #C9: Was the policy incepted within 30 days of the incident date?
@@ -608,31 +608,6 @@ for col_name in decimal_cols:
 
 # COMMAND ----------
 
-check_df
-
-# COMMAND ----------
-
-filtered_df = check_df[check_df.claim_number == "FC/901136611"][sorted(check_df.columns)]
-display(filtered_df)
-
-# COMMAND ----------
-
-melted_df = (
-    filtered_df
-    .selectExpr("stack({}, {}) as (column, value)".format(
-        len(filtered_df.columns),
-        ", ".join([f"'{c}', CAST(`{c}` AS STRING)" for c in filtered_df.columns])
-    ))
-)
-
-display(melted_df)
-
-# COMMAND ----------
-
-check_df.createOrReplaceGlobalTempView("global_temp_view")
-
-# COMMAND ----------
-
 # columns to fill using mean
 mean_fills = [ "policyholder_ncd_years", "inception_to_claim", "claim_driver_age", "veh_age", "business_mileage", "annual_mileage", "incidentHourC", "additional_vehicles_owned_1", "age_at_policy_start_date_1", "cars_in_household_1", "licence_length_years_1", "years_resident_in_uk_1", "max_additional_vehicles_owned", "min_additional_vehicles_owned", "max_age_at_policy_start_date", "min_age_at_policy_start_date", "max_cars_in_household", "min_cars_in_household", "max_licence_length_years", "min_licence_length_years", "max_years_resident_in_uk", "min_years_resident_in_uk", "impact_speed", "voluntary_amount", "vehicle_value", "manufacture_yr_claim", "outstanding_finance_amount", "claim_to_policy_end"]
 
@@ -682,28 +657,6 @@ test_df['dataset']= 'test'
 combined_df_pd = pd.concat([test_df, train_df])
 check_df = spark.createDataFrame(combined_df_pd)
 
-
-# COMMAND ----------
-
-# Show data quality summary
-print(f"Total records: {check_df.count()}")
-print(f"Train records: {check_df.filter(col('dataset') == 'train').count()}")
-print(f"Test records: {check_df.filter(col('dataset') == 'test').count()}")
-
-# Target distribution
-check_df.groupBy("dataset", "svi_risk").count().orderBy("dataset", "svi_risk").show()
-
-# Missing values summary
-missing_counts = {}
-for column in check_df.columns:
-    missing = check_df.filter(col(column).isNull()).count()
-    if missing > 0:
-        missing_counts[column] = missing
-
-if missing_counts:
-    print("\nColumns with missing values:")
-    for col_name, count in sorted(missing_counts.items(), key=lambda x: x[1], reverse=True):
-        print(f"  {col_name}: {count} ({count/check_df.count()*100:.2f}%)")
 
 # COMMAND ----------
 
